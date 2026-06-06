@@ -161,33 +161,62 @@ nim-code does **not** send any telemetry. The installer makes exactly one networ
 - **Free-tier rate limits**: ~40 RPM per key. Heavy use needs paid NIM or self-hosted NIM container.
 - **Some catalog-listed models are unusable.** Endpoint health and tool-call format compatibility vary — `bench/scripts/tool_call_smoke.sh <model>` filters them.
 
-## Stay under NIM's 40 RPM rate limit
+## Rate-limit handling (throttled by default in v0.2+)
 
-NIM free tier caps at ~40 requests/minute per key. Agent loops can burst above that and get 429'd mid-run. Two options:
+NIM free tier caps at ~40 requests/minute per key. Agent loops burst above that and get 429'd mid-run. **Starting in v0.2, `nimcode` runs all traffic through a local rate-limit proxy by default** so this never happens. You don't need to opt in — `nimcode` just works without 429s.
 
-**A. Single command — `nimcode-safe`** (recommended for heavy iterative use):
+### What the proxy does
+
+- **Token bucket**: caps at 38 RPM per key (2 under NVIDIA's 40 to be safe)
+- **Minimum 5s gap between calls per key** (default — set via `NIM_MIN_INTERVAL`)
+- **Multi-key round-robin** when you configure more than one key (see below)
+- **Blocking acquire** — requests queue and wait when the bucket is empty, never return 429 to opencode
+
+Implementation: `~/.config/nim-code/nim_proxy.py` (Python stdlib only, ~280 lines). Started automatically by the `nimcode` launcher; cleaned up on exit.
+
+### Multi-key setup (~80 RPM combined)
+
+If you have two `nvapi-...` keys (e.g., from two separate NVIDIA accounts), pass them as a comma-separated env var. The proxy will round-robin across them so combined effective RPM is the sum, while each key stays under the 40 RPM per-key cap.
 
 ```bash
-# uses your NVIDIA_API_KEY, throttles to 38 RPM, never sees a 429
-~/Projects/NIM_claude_code/tools/nimcode-safe
-
-# or with multiple keys, round-robin (combined 76 RPM under 40-per-key)
-NIM_KEYS="nvapi-A...,nvapi-B..." ~/Projects/NIM_claude_code/tools/nimcode-safe
+NIM_KEYS="nvapi-FIRST_KEY,nvapi-SECOND_KEY" nimcode
 ```
 
-It starts a local rate-limit proxy (`tools/nim_proxy.py`), writes a throttled variant of your `opencode.json` pointing at the proxy, and launches opencode. When the bucket is empty, requests **queue and wait** rather than fail. The proxy shuts down when you exit.
-
-**B. Run the proxy yourself + point opencode at it manually:**
+Or set it permanently in your shell rc:
 
 ```bash
-NIM_KEYS="nvapi-A...,nvapi-B..." python3 tools/nim_proxy.py &
-# then edit ~/.config/nim-code/opencode.json:
-#   "baseURL": "http://127.0.0.1:8123/v1"
+echo 'export NIM_KEYS="nvapi-FIRST...,nvapi-SECOND..."' >> ~/.bashrc
 ```
 
-Knobs: `NIM_PROXY_PORT` (default 8123), `NIM_RPM` (default 38 per key), `NIM_UPSTREAM` (default integrate.api.nvidia.com).
+When `NIM_KEYS` is set, the single `~/.nvidia_api_key` file is ignored.
 
-The proxy is Python stdlib only — no `pip install` needed. ~250 lines.
+**Honest note:** Getting multiple NIM keys requires multiple NVIDIA developer accounts (each phone-verified). That's friction NVIDIA imposes, not something nim-code can shortcut.
+
+### Tuning knobs (env vars)
+
+| Var | Default | Effect |
+|---|---|---|
+| `NIM_KEYS` | unset | comma-separated keys for round-robin; overrides `NVIDIA_API_KEY` |
+| `NIM_MIN_INTERVAL` | `5` | min seconds between calls per key; `0` disables the gate |
+| `NIM_RPM` | `38` | token-bucket cap per key |
+| `NIM_PROXY_PORT` | `8123` | port the proxy binds to |
+| `NIM_UPSTREAM` | `https://integrate.api.nvidia.com` | upstream NIM endpoint |
+
+### Disabling throttling
+
+For paid NIM endpoints or self-hosted NIM containers where rate limits don't apply, edit `~/.config/opencode/opencode.json` and change:
+
+```json
+"baseURL": "http://127.0.0.1:8123/v1"
+```
+
+back to:
+
+```json
+"baseURL": "https://integrate.api.nvidia.com/v1"
+```
+
+Re-running `./install.sh` will overwrite this with the throttled default, so document the change for yourself or maintain a paid-config fork. ~250 lines.
 
 ## Troubleshooting
 
