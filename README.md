@@ -34,13 +34,15 @@ curl -fsSL https://github.com/natkal-coder/nim-code/releases/latest/download/nim
 nimcode
 ```
 
-**Have two keys (e.g. from two NVIDIA accounts)?** Same flow, just put both keys in the file — one per line. The installer detects multi-key automatically and the proxy round-robins between them for ~80 RPM combined:
+**Have multiple keys (from multiple NVIDIA accounts)?** Put them all in the file — one per line. No limit on how many. The installer detects multi-key automatically and the proxy round-robins across all of them:
 
 ```bash
-# Two keys → ~80 RPM combined (each stays under per-key 40 RPM cap)
+# N keys → ~N×40 RPM combined (each stays under per-key 40 RPM cap)
 cat > ~/.nvidia_api_key <<'EOF'
 nvapi-FIRST_KEY_HERE
 nvapi-SECOND_KEY_HERE
+nvapi-THIRD_KEY_HERE
+# add as many as you have — no upper limit
 EOF
 chmod 600 ~/.nvidia_api_key
 curl -fsSL https://github.com/natkal-coder/nim-code/releases/latest/download/nimcode-installer.sh | bash
@@ -127,6 +129,19 @@ Configured in `opencode.json`. Switch in-session with `/models`.
 
 Methodology + per-task results: [`docs/benchmarks.md`](docs/benchmarks.md).
 
+## Session management
+
+```bash
+nimcode                              # new session
+nimcode -c                           # continue the last session
+nimcode -s ses_164807e71ffe...       # resume a specific session by ID
+nimcode --fork -s ses_164807e71ffe.. # fork a session (branch off without modifying the original)
+nimcode sessions                     # list all sessions
+nimcode rename ses_164807e71ffe... "My project refactor"  # rename a session
+```
+
+Session IDs are shown in the opencode UI on exit (the `Continue` line) and by `nimcode sessions`.
+
 ## For AI coding agents
 
 If another coding agent (Claude Code, opencode, Aider, you) wants to **invoke nimcode programmatically** rather than via TUI:
@@ -188,28 +203,30 @@ NIM free tier caps at ~40 requests/minute per key. Agent loops burst above that 
 
 Implementation: `~/.config/nim-code/nim_proxy.py` (Python stdlib only, ~280 lines). Started automatically by the `nimcode` launcher; cleaned up on exit.
 
-### Multi-key setup (~80 RPM combined)
+### Multi-key setup (N keys = ~N×40 RPM)
 
-If you have two or more `nvapi-...` keys (one per NVIDIA developer account), put each on its own line in `~/.nvidia_api_key`:
+Put any number of `nvapi-...` keys in `~/.nvidia_api_key`, one per line:
 
 ```bash
 cat > ~/.nvidia_api_key <<'EOF'
-nvapi-FIRST_KEY_HERE
-nvapi-SECOND_KEY_HERE
+nvapi-KEY_ONE
+nvapi-KEY_TWO
+nvapi-KEY_THREE
+# no upper limit — add as many keys as you have
 EOF
 chmod 600 ~/.nvidia_api_key
 ./install.sh   # re-run to refresh — env file detects multi-key automatically
 nimcode
 ```
 
-Comma-separated on one line also works (`nvapi-A,nvapi-B`). Comments (`#`) and blank lines are ignored.
+Comma-separated on one line also works (`nvapi-A,nvapi-B,nvapi-C`). Comments (`#`) and blank lines are ignored.
 
-The proxy round-robins across them — effective RPM = N × per-key cap, with each key staying under NVIDIA's 40 RPM limit independently.
+The proxy round-robins across all keys — effective RPM = N × 38 (per-key cap), with each key independently staying under NVIDIA's 40 RPM limit. 3 keys = ~114 RPM, 5 keys = ~190 RPM, etc.
 
 If you'd rather not put keys in a file, set `NIM_KEYS` as an env var instead:
 
 ```bash
-NIM_KEYS="nvapi-FIRST,nvapi-SECOND" nimcode
+NIM_KEYS="nvapi-A,nvapi-B,nvapi-C" nimcode
 ```
 
 `NIM_KEYS` (env) overrides `~/.nvidia_api_key` (file) when both are set.

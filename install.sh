@@ -37,7 +37,7 @@ KEY_FILE="$HOME/.nvidia_api_key"
 
 NIM_URL="https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL="moonshotai/kimi-k2.6"
-NIMCODE_VERSION="0.2.1"
+NIMCODE_VERSION="0.3.0"
 UPSTREAM_RAW="https://raw.githubusercontent.com/natkal-coder/nim-code/main"
 
 # ---------- ui ----------
@@ -300,12 +300,97 @@ cat > "$LAUNCHER" <<'LAUNCH'
 # nimcode — launch opencode pointed at the local NIM rate-limit proxy so
 # free-tier users (40 RPM cap) never hit 429 mid-agent-loop.
 #
+# Usage:
+#   nimcode                       start a new session
+#   nimcode -c                    continue the last session
+#   nimcode -s <sessionID>        resume a specific session
+#   nimcode rename <sessionID> <new-title>   rename a session
+#   nimcode sessions              list all sessions
+#
 # Multi-key round-robin (combines under per-key 40 RPM cap):
 #   NIM_KEYS="nvapi-A...,nvapi-B..." nimcode
 #
 # Strict pacing override (default 5s between calls per key; 0 disables):
 #   NIM_MIN_INTERVAL=10 nimcode
 set -euo pipefail
+
+OPENCODE_DB="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db"
+
+nimcode_banner() {
+  printf '\033[32m'
+  cat <<'ART'
+         _                        __
+   ___  (_)_ _  _______  ___/ /__
+  / _ \/ /  ' \/ __/ _ \/ _  / -_)
+ /_//_/_/_/_/_/\__/\___/\_,_/\__/
+ART
+  printf '\033[0m\n'
+}
+
+# --- subcommands that don't need the proxy ---
+
+case "${1:-}" in
+  rename)
+    shift
+    if [ $# -lt 2 ]; then
+      echo "usage: nimcode rename <sessionID> <new-title>" >&2
+      exit 1
+    fi
+    ses_id="$1"; shift; new_title="$*"
+    if [ ! -f "$OPENCODE_DB" ]; then
+      echo "nim-code: opencode database not found at $OPENCODE_DB" >&2; exit 1
+    fi
+    command -v python3 >/dev/null 2>&1 || { echo "nim-code: python3 required" >&2; exit 1; }
+    python3 -c "
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+cur = conn.cursor()
+cur.execute('SELECT id, title FROM session WHERE id = ?', (sys.argv[2],))
+row = cur.fetchone()
+if not row:
+    print(f'nim-code: session {sys.argv[2]} not found', file=sys.stderr)
+    sys.exit(1)
+old_title = row[1] or '(untitled)'
+cur.execute('UPDATE session SET title = ? WHERE id = ?', (sys.argv[3], sys.argv[2]))
+conn.commit()
+conn.close()
+print(f'renamed: \"{old_title}\" -> \"{sys.argv[3]}\"')
+" "$OPENCODE_DB" "$ses_id" "$new_title"
+    exit $?
+    ;;
+  sessions)
+    nimcode_banner
+    command -v opencode >/dev/null 2>&1 || { echo "nim-code: opencode CLI not on PATH — run install.sh" >&2; exit 1; }
+    opencode session list
+    exit $?
+    ;;
+  -h|--help|help)
+    nimcode_banner
+    cat <<'EOF'
+nimcode — NIM-powered AI coding agent
+
+Usage:
+  nimcode                                 start a new session
+  nimcode -c                              continue the last session
+  nimcode -s <sessionID>                  resume a specific session
+  nimcode --fork -s <sessionID>           fork and resume a session
+  nimcode rename <sessionID> <new-title>  rename a session
+  nimcode sessions                        list all sessions
+  nimcode run "prompt"                    run a one-shot prompt
+  nimcode -m provider/model               use a specific model
+
+Environment:
+  NIM_KEYS           comma-separated API keys for round-robin
+  NIM_MIN_INTERVAL   min seconds between calls per key (default: 5)
+  NIM_RPM            token-bucket cap per key (default: 38)
+  NIM_PROXY_PORT     port the proxy binds to (default: 8123)
+EOF
+    exit 0
+    ;;
+esac
+
+# --- normal launch: needs proxy ---
+
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nim-code"
 ENV_FILE="$CONFIG_DIR/env"
 PROXY_FILE="$CONFIG_DIR/nim_proxy.py"
