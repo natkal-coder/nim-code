@@ -37,7 +37,7 @@ KEY_FILE="$HOME/.nvidia_api_key"
 
 NIM_URL="https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL="moonshotai/kimi-k2.6"
-NIMCODE_VERSION="0.3.0"
+NIMCODE_VERSION="0.3.1"
 UPSTREAM_RAW="https://raw.githubusercontent.com/natkal-coder/nim-code/main"
 
 # ---------- ui ----------
